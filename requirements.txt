@@ -1,3 +1,6 @@
+# Core dependency (pin first so everything else aligns)
+numpy==1.26.4
+
 # Web / API
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
@@ -18,8 +21,10 @@ loguru==0.7.2
 # Image classification (TrashNet)
 tensorflow==2.15.0
 Pillow==10.3.0
-numpy==1.26.4
 scikit-learn==1.4.2
+scipy==1.12.0
+h5py==3.10.0
+opencv-python==4.9.0.80
 
 # Testing
 pytest==8.2.0
