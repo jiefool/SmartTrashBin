@@ -42,10 +42,7 @@ class TrashClassifier:
 
     def load_model(self) -> None:
         """Load the trained model from disk."""
-        try:
-            from keras.models import load_model
-        except ImportError:
-            from tensorflow.keras.models import load_model
+        from keras.models import load_model
 
         model_path = settings.model_path
         if not os.path.exists(model_path):
@@ -69,10 +66,7 @@ class TrashClassifier:
         import numpy as np
         from PIL import Image
 
-        try:
-            from keras.applications.mobilenet_v2 import preprocess_input
-        except ImportError:
-            from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+        from keras.applications.mobilenet_v2 import preprocess_input
 
         img = Image.open(BytesIO(image_bytes)).convert("RGB")
         img = img.resize(IMG_SIZE)

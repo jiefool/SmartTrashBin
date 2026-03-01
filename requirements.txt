@@ -19,7 +19,8 @@ python-dotenv==1.0.1
 loguru==0.7.2
 
 # Image classification (TrashNet)
-tensorflow==2.15.0
+tensorflow>=2.15.0
+keras>=2.15.0
 Pillow==10.3.0
 scikit-learn==1.4.2
 scipy==1.12.0
