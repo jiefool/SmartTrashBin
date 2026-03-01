@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TrashCategory(str, Enum):
@@ -25,6 +25,8 @@ class CategoryPrediction(BaseModel):
 
 class ClassificationResult(BaseModel):
     """Full classification result for an uploaded image."""
+    model_config = ConfigDict(protected_namespaces=())
+
     predicted_category: TrashCategory
     confidence: float = Field(..., ge=0.0, le=1.0)
     all_predictions: List[CategoryPrediction] = Field(

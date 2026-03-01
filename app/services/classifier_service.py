@@ -11,9 +11,7 @@ import os
 from io import BytesIO
 from typing import List
 
-import numpy as np
 from loguru import logger
-from PIL import Image
 
 from app.config import settings
 from app.models.classification import (
@@ -63,8 +61,10 @@ class TrashClassifier:
     def is_ready(self) -> bool:
         return self._model is not None
 
-    def _preprocess(self, image_bytes: bytes) -> np.ndarray:
+    def _preprocess(self, image_bytes: bytes):
         """Convert raw image bytes into a normalised tensor for MobileNetV2."""
+        import numpy as np
+        from PIL import Image
         from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
         img = Image.open(BytesIO(image_bytes)).convert("RGB")
