@@ -52,9 +52,12 @@ def download_dataset() -> str:
 
 def build_model(num_classes: int = 6):
     """Build a MobileNetV2-based transfer learning model."""
-    import tensorflow as tf
-    from tensorflow.keras import layers, models
-    from tensorflow.keras.applications import MobileNetV2
+    try:
+        from keras import layers, models, optimizers
+        from keras.applications import MobileNetV2
+    except ImportError:
+        from tensorflow.keras import layers, models, optimizers
+        from tensorflow.keras.applications import MobileNetV2
 
     base_model = MobileNetV2(
         weights="imagenet",
@@ -73,7 +76,7 @@ def build_model(num_classes: int = 6):
     ])
 
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+        optimizer=optimizers.Adam(learning_rate=1e-3),
         loss="categorical_crossentropy",
         metrics=["accuracy"],
     )
@@ -82,9 +85,12 @@ def build_model(num_classes: int = 6):
 
 def train() -> None:
     """Full training pipeline."""
-    import tensorflow as tf
-    from tensorflow.keras.preprocessing.image import ImageDataGenerator
-    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+    try:
+        from keras.preprocessing.image import ImageDataGenerator
+        from keras.applications.mobilenet_v2 import preprocess_input
+    except ImportError:
+        from tensorflow.keras.preprocessing.image import ImageDataGenerator
+        from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
     dataset_path = download_dataset()
 
