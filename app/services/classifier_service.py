@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 """
-Trash classification service using TensorFlow + MobileNetV2.
+Trash classification service using TFLite Runtime.
 
-Uses transfer learning on the TrashNet dataset (6 categories:
-cardboard, glass, metal, paper, plastic, trash).
+Uses a TFLite model converted from MobileNetV2 trained on the TrashNet
+dataset (6 categories: cardboard, glass, metal, paper, plastic, trash).
+
+Works on Raspberry Pi without full TensorFlow installed.
 """
 
 import os
@@ -35,14 +37,19 @@ CATEGORY_LABELS: List[TrashCategory] = [
 
 
 class TrashClassifier:
-    """Loads a trained MobileNetV2 model and classifies trash images."""
+    """Loads a TFLite model and classifies trash images."""
 
     def __init__(self) -> None:
-        self._model = None
+        self._interpreter = None
+        self._input_details = None
+        self._output_details = None
 
     def load_model(self) -> None:
-        """Load the trained model from disk."""
-        from keras.models import load_model
+        """Load the TFLite model from disk."""
+        try:
+            from tflite_runtime.interpreter import Interpreter
+        except ImportError:
+            from tensorflow.lite.python.interpreter import Interpreter
 
         model_path = settings.model_path
         if not os.path.exists(model_path):
@@ -53,26 +60,28 @@ class TrashClassifier:
             )
             return
 
-        logger.info(f"Loading trash classification model from '{model_path}' ...")
-        self._model = load_model(model_path)
+        logger.info(f"Loading TFLite model from '{model_path}' ...")
+        self._interpreter = Interpreter(model_path=model_path)
+        self._interpreter.allocate_tensors()
+        self._input_details = self._interpreter.get_input_details()
+        self._output_details = self._interpreter.get_output_details()
         logger.info("Model loaded successfully.")
 
     @property
     def is_ready(self) -> bool:
-        return self._model is not None
+        return self._interpreter is not None
 
     def _preprocess(self, image_bytes: bytes):
         """Convert raw image bytes into a normalised tensor for MobileNetV2."""
         import numpy as np
         from PIL import Image
 
-        from keras.applications.mobilenet_v2 import preprocess_input
-
         img = Image.open(BytesIO(image_bytes)).convert("RGB")
         img = img.resize(IMG_SIZE)
         arr = np.array(img, dtype=np.float32)
         arr = np.expand_dims(arr, axis=0)  # batch dimension
-        arr = preprocess_input(arr)
+        # MobileNetV2 preprocess: scale pixels from [0,255] to [-1,1]
+        arr = (arr / 127.5) - 1.0
         return arr
 
     def classify(self, image_bytes: bytes) -> ClassificationResult:
@@ -87,7 +96,10 @@ class TrashClassifier:
             )
 
         tensor = self._preprocess(image_bytes)
-        predictions = self._model.predict(tensor, verbose=0)[0]  # shape (6,)
+
+        self._interpreter.set_tensor(self._input_details[0]["index"], tensor)
+        self._interpreter.invoke()
+        predictions = self._interpreter.get_tensor(self._output_details[0]["index"])[0]
 
         # Build per-category predictions sorted by confidence (desc)
         all_preds = sorted(

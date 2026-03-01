@@ -20,6 +20,7 @@ EPOCHS = 10
 DATASET_URL = "https://github.com/garythung/trashnet/raw/master/data/dataset-resized.zip"
 DATASET_DIR = "data/trashnet"
 MODEL_SAVE_PATH = "data/models/trashnet_mobilenetv2.keras"
+TFLITE_SAVE_PATH = "data/models/trashnet_mobilenetv2.tflite"
 
 
 def download_dataset() -> str:
@@ -132,11 +133,23 @@ def train() -> None:
     loss, acc = model.evaluate(val_gen)
     print(f"\nValidation loss: {loss:.4f}  |  Validation accuracy: {acc:.4f}")
 
-    # Save
+    # Save Keras model
     os.makedirs(os.path.dirname(MODEL_SAVE_PATH), exist_ok=True)
     model.save(MODEL_SAVE_PATH)
-    print(f"\nModel saved to '{MODEL_SAVE_PATH}'")
-    print("You can now restart the app and POST images to /classify")
+    print(f"\nKeras model saved to '{MODEL_SAVE_PATH}'")
+
+    # Convert to TFLite for Raspberry Pi deployment
+    import tensorflow as tf
+
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    tflite_model = converter.convert()
+
+    with open(TFLITE_SAVE_PATH, "wb") as f:
+        f.write(tflite_model)
+    print(f"TFLite model saved to '{TFLITE_SAVE_PATH}'")
+    print("\nCopy the .tflite file to your Raspberry Pi and restart the app.")
+    print("You can now POST images to /classify")
 
 
 if __name__ == "__main__":

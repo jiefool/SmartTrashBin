@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     poll_interval_seconds: int = 10
 
     # Classification model
-    model_path: str = "data/models/trashnet_mobilenetv2.keras"
+    model_path: str = "data/models/trashnet_mobilenetv2.tflite"
 
 
 
