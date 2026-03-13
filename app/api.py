@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse, StreamingResponse
 from loguru import logger
 
 from app.config import settings
@@ -71,6 +72,8 @@ async def root() -> dict[str, Any]:
             "single_bin": "/bins/{bin_id}",
             "classify": "POST /classify",
             "capture_and_classify": "POST /capture-and-classify",
+            "camera_feed": "/camera/feed",
+            "camera_stream": "/camera/stream",
             "docs": "/docs",
         },
     }
@@ -179,3 +182,98 @@ async def capture_and_classify() -> ClassificationResult:
     # Classify
     result = classifier.classify(image_bytes)
     return result
+
+
+@app.get("/camera/stream", tags=["Camera"])
+async def camera_stream():
+    """
+    Raw MJPEG stream from the attached camera.
+
+    Use this URL directly in an <img> tag or VLC/ffplay.
+    """
+    if not camera.is_ready:
+        raise HTTPException(
+            status_code=503,
+            detail="No camera available. Attach a camera and restart the app.",
+        )
+
+    return StreamingResponse(
+        camera.stream_frames(fps=10),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.get("/camera/feed", response_class=HTMLResponse, tags=["Camera"])
+async def camera_feed():
+    """
+    View the live camera feed in your browser.
+
+    Open http://<pi-ip>:8001/camera/feed
+    """
+    if not camera.is_ready:
+        raise HTTPException(
+            status_code=503,
+            detail="No camera available. Attach a camera and restart the app.",
+        )
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>{settings.app_name} – Camera Feed</title>
+        <style>
+            body {{
+                background: #1a1a2e; color: #e0e0e0;
+                font-family: Arial, sans-serif;
+                display: flex; flex-direction: column;
+                align-items: center; padding: 20px;
+            }}
+            h1 {{ color: #00d4aa; }}
+            img {{ border: 3px solid #00d4aa; border-radius: 8px; max-width: 90%; }}
+            .controls {{ margin: 20px; }}
+            button {{
+                background: #00d4aa; color: #1a1a2e; border: none;
+                padding: 12px 24px; font-size: 16px; border-radius: 6px;
+                cursor: pointer; margin: 5px;
+            }}
+            button:hover {{ background: #00b894; }}
+            #result {{
+                margin-top: 15px; padding: 15px; background: #16213e;
+                border-radius: 8px; min-width: 300px; text-align: left;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>📷 {settings.app_name} – Live Feed</h1>
+        <img src="/camera/stream" alt="Camera Feed" />
+        <div class="controls">
+            <button onclick="classify()">🔍 Classify Trash</button>
+        </div>
+        <div id="result"></div>
+        <script>
+            async function classify() {{
+                const res = document.getElementById('result');
+                res.innerHTML = '⏳ Classifying...';
+                try {{
+                    const resp = await fetch('/capture-and-classify', {{ method: 'POST' }});
+                    const data = await resp.json();
+                    if (resp.ok) {{
+                        let html = `<h3>🏷️ ${{data.predicted_category}} (${{(data.confidence * 100).toFixed(1)}}%)</h3>`;
+                        html += '<ul>';
+                        data.all_predictions.forEach(p => {{
+                            html += `<li>${{p.category}}: ${{(p.confidence * 100).toFixed(1)}}%</li>`;
+                        }});
+                        html += '</ul>';
+                        res.innerHTML = html;
+                    }} else {{
+                        res.innerHTML = `❌ ${{data.detail}}`;
+                    }}
+                }} catch (e) {{
+                    res.innerHTML = `❌ Error: ${{e.message}}`;
+                }}
+            }}
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)

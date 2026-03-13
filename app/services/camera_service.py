@@ -11,6 +11,7 @@ Supports:
 import os
 import time
 from io import BytesIO
+from typing import Generator
 
 from loguru import logger
 
@@ -117,6 +118,27 @@ class CameraService:
             f.write(image_bytes)
         logger.debug(f"Image saved to '{filepath}'")
         return filepath
+
+    def stream_frames(self, fps: int = 10) -> Generator[bytes, None, None]:
+        """
+        Yield MJPEG frames for live video streaming.
+
+        Each yielded chunk is a complete multipart MJPEG frame boundary.
+        """
+        delay = 1.0 / fps
+        while self.is_ready:
+            try:
+                frame_bytes = self.capture()
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n"
+                    + frame_bytes
+                    + b"\r\n"
+                )
+                time.sleep(delay)
+            except Exception as exc:
+                logger.error(f"Stream frame error: {exc}")
+                break
 
     def release(self) -> None:
         """Release camera resources."""
