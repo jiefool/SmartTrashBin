@@ -222,55 +222,210 @@ async def camera_feed():
     <head>
         <title>{settings.app_name} – Camera Feed</title>
         <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
             body {{
                 background: #1a1a2e; color: #e0e0e0;
-                font-family: Arial, sans-serif;
+                font-family: 'Segoe UI', Arial, sans-serif;
                 display: flex; flex-direction: column;
                 align-items: center; padding: 20px;
+                min-height: 100vh;
             }}
-            h1 {{ color: #00d4aa; }}
-            img {{ border: 3px solid #00d4aa; border-radius: 8px; max-width: 90%; }}
-            .controls {{ margin: 20px; }}
+            h1 {{ color: #00d4aa; margin-bottom: 15px; font-size: 1.6em; }}
+            .container {{
+                display: flex; flex-wrap: wrap; justify-content: center;
+                gap: 20px; width: 100%; max-width: 1100px;
+            }}
+            .video-panel {{
+                position: relative; flex: 1; min-width: 320px;
+            }}
+            .video-panel img {{
+                width: 100%; border: 3px solid #00d4aa;
+                border-radius: 10px; display: block;
+            }}
+            .overlay {{
+                position: absolute; top: 12px; left: 12px;
+                background: rgba(0,0,0,0.7); padding: 8px 14px;
+                border-radius: 6px; font-size: 1.3em; font-weight: bold;
+                display: none; z-index: 10;
+            }}
+            .overlay.show {{ display: block; }}
+            .side-panel {{
+                flex: 0 0 320px; display: flex; flex-direction: column; gap: 12px;
+            }}
+            .controls {{ display: flex; gap: 10px; }}
             button {{
                 background: #00d4aa; color: #1a1a2e; border: none;
-                padding: 12px 24px; font-size: 16px; border-radius: 6px;
-                cursor: pointer; margin: 5px;
+                padding: 14px 20px; font-size: 15px; font-weight: bold;
+                border-radius: 8px; cursor: pointer; flex: 1;
+                transition: background 0.2s;
             }}
             button:hover {{ background: #00b894; }}
-            #result {{
-                margin-top: 15px; padding: 15px; background: #16213e;
-                border-radius: 8px; min-width: 300px; text-align: left;
+            button:disabled {{ background: #555; cursor: not-allowed; }}
+            #autoBtn.active {{ background: #e74c3c; }}
+            #autoBtn.active:hover {{ background: #c0392b; }}
+            .result-card {{
+                background: #16213e; border-radius: 10px;
+                padding: 18px; min-height: 120px;
             }}
+            .result-card h2 {{
+                font-size: 1.1em; color: #00d4aa; margin-bottom: 10px;
+            }}
+            .category-label {{
+                font-size: 2em; font-weight: bold; margin: 5px 0;
+            }}
+            .confidence {{
+                font-size: 1.2em; color: #aaa; margin-bottom: 12px;
+            }}
+            .bar-chart {{ display: flex; flex-direction: column; gap: 6px; }}
+            .bar-row {{
+                display: flex; align-items: center; gap: 8px; font-size: 0.85em;
+            }}
+            .bar-label {{ width: 75px; text-align: right; }}
+            .bar-track {{
+                flex: 1; height: 18px; background: #0f3460;
+                border-radius: 4px; overflow: hidden;
+            }}
+            .bar-fill {{
+                height: 100%; border-radius: 4px;
+                transition: width 0.4s ease;
+            }}
+            .bar-pct {{ width: 45px; text-align: right; font-size: 0.8em; color: #aaa; }}
+            .history {{
+                background: #16213e; border-radius: 10px; padding: 14px;
+                max-height: 200px; overflow-y: auto;
+            }}
+            .history h2 {{ font-size: 1em; color: #00d4aa; margin-bottom: 8px; }}
+            .history-item {{
+                display: flex; justify-content: space-between;
+                padding: 4px 0; border-bottom: 1px solid #0f3460;
+                font-size: 0.85em;
+            }}
+            .status {{ font-size: 0.9em; color: #aaa; text-align: center; margin-top: 5px; }}
         </style>
     </head>
     <body>
         <h1>📷 {settings.app_name} – Live Feed</h1>
-        <img src="/camera/stream" alt="Camera Feed" />
-        <div class="controls">
-            <button onclick="classify()">🔍 Classify Trash</button>
+        <div class="container">
+            <div class="video-panel">
+                <div class="overlay" id="overlay"></div>
+                <img src="/camera/stream" alt="Camera Feed" />
+            </div>
+            <div class="side-panel">
+                <div class="controls">
+                    <button id="classifyBtn" onclick="classifyOnce()">🔍 Classify</button>
+                    <button id="autoBtn" onclick="toggleAuto()">▶ Auto Detect</button>
+                </div>
+                <div class="status" id="status">Ready</div>
+                <div class="result-card" id="resultCard">
+                    <h2>🏷️ Detection Result</h2>
+                    <div class="category-label" id="catLabel">—</div>
+                    <div class="confidence" id="confLabel"></div>
+                    <div class="bar-chart" id="barChart"></div>
+                </div>
+                <div class="history">
+                    <h2>📋 History</h2>
+                    <div id="historyList"></div>
+                </div>
+            </div>
         </div>
-        <div id="result"></div>
         <script>
-            async function classify() {{
-                const res = document.getElementById('result');
-                res.innerHTML = '⏳ Classifying...';
+            const COLORS = {{
+                cardboard: '#e67e22', glass: '#3498db', metal: '#95a5a6',
+                paper: '#f1c40f', plastic: '#e74c3c', trash: '#7f8c8d'
+            }};
+            const ICONS = {{
+                cardboard: '📦', glass: '🥛', metal: '🥫',
+                paper: '📄', plastic: '🧴', trash: '🗑️'
+            }};
+
+            let autoInterval = null;
+            let classifying = false;
+
+            async function doClassify() {{
+                if (classifying) return;
+                classifying = true;
+                document.getElementById('status').textContent = '⏳ Classifying...';
+                document.getElementById('classifyBtn').disabled = true;
                 try {{
                     const resp = await fetch('/capture-and-classify', {{ method: 'POST' }});
                     const data = await resp.json();
                     if (resp.ok) {{
-                        let html = `<h3>🏷️ ${{data.predicted_category}} (${{(data.confidence * 100).toFixed(1)}}%)</h3>`;
-                        html += '<ul>';
-                        data.all_predictions.forEach(p => {{
-                            html += `<li>${{p.category}}: ${{(p.confidence * 100).toFixed(1)}}%</li>`;
-                        }});
-                        html += '</ul>';
-                        res.innerHTML = html;
+                        showResult(data);
+                        addHistory(data);
                     }} else {{
-                        res.innerHTML = `❌ ${{data.detail}}`;
+                        document.getElementById('status').textContent = '❌ ' + data.detail;
                     }}
                 }} catch (e) {{
-                    res.innerHTML = `❌ Error: ${{e.message}}`;
+                    document.getElementById('status').textContent = '❌ ' + e.message;
                 }}
+                classifying = false;
+                document.getElementById('classifyBtn').disabled = false;
+            }}
+
+            function classifyOnce() {{ doClassify(); }}
+
+            function toggleAuto() {{
+                const btn = document.getElementById('autoBtn');
+                if (autoInterval) {{
+                    clearInterval(autoInterval);
+                    autoInterval = null;
+                    btn.textContent = '▶ Auto Detect';
+                    btn.classList.remove('active');
+                    document.getElementById('status').textContent = 'Auto detect stopped';
+                }} else {{
+                    doClassify();
+                    autoInterval = setInterval(doClassify, 3000);
+                    btn.textContent = '⏹ Stop';
+                    btn.classList.add('active');
+                }}
+            }}
+
+            function showResult(data) {{
+                const cat = data.predicted_category;
+                const pct = (data.confidence * 100).toFixed(1);
+                const icon = ICONS[cat] || '❓';
+                const color = COLORS[cat] || '#00d4aa';
+
+                document.getElementById('catLabel').innerHTML =
+                    `<span style="color:${{color}}">${{icon}} ${{cat.toUpperCase()}}</span>`;
+                document.getElementById('confLabel').textContent = pct + '% confidence';
+                document.getElementById('status').textContent =
+                    `Detected: ${{cat}} (${{pct}}%)`;
+
+                // Overlay on video
+                const overlay = document.getElementById('overlay');
+                overlay.innerHTML = `${{icon}} ${{cat.toUpperCase()}} ${{pct}}%`;
+                overlay.style.color = color;
+                overlay.classList.add('show');
+
+                // Bar chart
+                let bars = '';
+                data.all_predictions.forEach(p => {{
+                    const w = (p.confidence * 100).toFixed(1);
+                    const c = COLORS[p.category] || '#00d4aa';
+                    bars += `
+                        <div class="bar-row">
+                            <span class="bar-label">${{ICONS[p.category] || ''}} ${{p.category}}</span>
+                            <div class="bar-track">
+                                <div class="bar-fill" style="width:${{w}}%;background:${{c}}"></div>
+                            </div>
+                            <span class="bar-pct">${{w}}%</span>
+                        </div>`;
+                }});
+                document.getElementById('barChart').innerHTML = bars;
+            }}
+
+            function addHistory(data) {{
+                const list = document.getElementById('historyList');
+                const cat = data.predicted_category;
+                const pct = (data.confidence * 100).toFixed(1);
+                const time = new Date().toLocaleTimeString();
+                const icon = ICONS[cat] || '❓';
+                const item = document.createElement('div');
+                item.className = 'history-item';
+                item.innerHTML = `<span>${{icon}} ${{cat}}</span><span>${{pct}}%</span><span>${{time}}</span>`;
+                list.insertBefore(item, list.firstChild);
+                if (list.children.length > 20) list.removeChild(list.lastChild);
             }}
         </script>
     </body>
