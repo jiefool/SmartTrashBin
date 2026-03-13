@@ -29,6 +29,10 @@ scipy==1.12.0
 h5py==3.10.0
 opencv-python==4.9.0.80
 
+# Camera (Raspberry Pi)
+# picamera2 is pre-installed on Raspberry Pi OS – do not pip install it
+# If using USB webcam, opencv-python above handles it
+
 # Testing
 pytest==8.2.0
 pytest-asyncio==0.23.6

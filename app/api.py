@@ -13,6 +13,7 @@ from app.config import settings
 from app.models.bin_status import BinReading
 from app.models.classification import ClassificationResult
 from app.sensors.ultrasonic import SimulatedUltrasonicSensor
+from app.services.camera_service import camera
 from app.services.classifier_service import classifier
 from app.services.monitor_service import MonitorService
 from app.utils.logging import setup_logging
@@ -40,8 +41,12 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     # Load the trash classification model (non-blocking if missing)
     classifier.load_model()
 
+    # Initialise camera (non-blocking if no camera attached)
+    camera.initialise()
+
     yield
     monitor.stop()
+    camera.release()
     logger.info(f"{settings.app_name} shut down.")
 
 
@@ -59,11 +64,13 @@ async def root() -> dict[str, Any]:
         "app": settings.app_name,
         "version": "1.0.0",
         "classifier_ready": classifier.is_ready,
+        "camera_ready": camera.is_ready,
         "endpoints": {
             "health": "/health",
             "all_bins": "/bins",
             "single_bin": "/bins/{bin_id}",
             "classify": "POST /classify",
+            "capture_and_classify": "POST /capture-and-classify",
             "docs": "/docs",
         },
     }
@@ -135,5 +142,40 @@ async def classify_image(file: UploadFile = File(...)) -> ClassificationResult:
     if len(image_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+    result = classifier.classify(image_bytes)
+    return result
+
+
+@app.post("/capture-and-classify", response_model=ClassificationResult, tags=["Classification"])
+async def capture_and_classify() -> ClassificationResult:
+    """
+    Capture an image from the attached camera and classify the trash.
+
+    No file upload needed – the Pi camera takes the photo automatically.
+    Categories (TrashNet): cardboard, glass, metal, paper, plastic, trash.
+    """
+    if not camera.is_ready:
+        raise HTTPException(
+            status_code=503,
+            detail="No camera available. Attach a camera and restart the app.",
+        )
+
+    if not classifier.is_ready:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Classification model not loaded. "
+                "Train it first: python -m app.training.train"
+            ),
+        )
+
+    # Capture image from camera
+    image_bytes = camera.capture()
+
+    # Save the captured image for reference
+    saved_path = camera.save_capture(image_bytes)
+    logger.info(f"Captured image saved to '{saved_path}'")
+
+    # Classify
     result = classifier.classify(image_bytes)
     return result
