@@ -27,12 +27,9 @@ IMG_SIZE = (224, 224)
 
 # Category labels in the same order used during training
 CATEGORY_LABELS: List[TrashCategory] = [
-    TrashCategory.CARDBOARD,
-    TrashCategory.GLASS,
-    TrashCategory.METAL,
-    TrashCategory.PAPER,
-    TrashCategory.PLASTIC,
-    TrashCategory.TRASH,
+    TrashCategory.BIODEGRADABLE,
+    TrashCategory.NON_BIODEGRADABLE,
+    TrashCategory.HAZARDOUS,
 ]
 
 

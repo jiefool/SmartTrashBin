@@ -123,7 +123,7 @@ async def classify_image(file: UploadFile = File(...)) -> ClassificationResult:
     """
     Upload an image of trash and get its predicted category.
 
-    Categories (TrashNet): cardboard, glass, metal, paper, plastic, trash.
+    Categories: biodegradable, non_biodegradable, hazardous.
     """
     if not classifier.is_ready:
         raise HTTPException(
@@ -155,7 +155,7 @@ async def capture_and_classify() -> ClassificationResult:
     Capture an image from the attached camera and classify the trash.
 
     No file upload needed – the Pi camera takes the photo automatically.
-    Categories (TrashNet): cardboard, glass, metal, paper, plastic, trash.
+    Categories: biodegradable, non_biodegradable, hazardous.
     """
     if not camera.is_ready:
         raise HTTPException(
@@ -330,12 +330,14 @@ async def camera_feed():
         </div>
         <script>
             const COLORS = {{
-                cardboard: '#e67e22', glass: '#3498db', metal: '#95a5a6',
-                paper: '#f1c40f', plastic: '#e74c3c', trash: '#7f8c8d'
+                biodegradable: '#27ae60',
+                non_biodegradable: '#2980b9',
+                hazardous: '#e74c3c'
             }};
             const ICONS = {{
-                cardboard: '📦', glass: '🥛', metal: '🥫',
-                paper: '📄', plastic: '🧴', trash: '🗑️'
+                biodegradable: '🍂',
+                non_biodegradable: '♻️',
+                hazardous: '☣️'
             }};
 
             let autoInterval = null;

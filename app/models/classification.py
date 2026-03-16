@@ -8,13 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class TrashCategory(str, Enum):
-    """TrashNet dataset categories."""
-    CARDBOARD = "cardboard"
-    GLASS = "glass"
-    METAL = "metal"
-    PAPER = "paper"
-    PLASTIC = "plastic"
-    TRASH = "trash"
+    """Garbage classification categories."""
+    BIODEGRADABLE = "biodegradable"
+    NON_BIODEGRADABLE = "non_biodegradable"
+    HAZARDOUS = "hazardous"
 
 
 class CategoryPrediction(BaseModel):
