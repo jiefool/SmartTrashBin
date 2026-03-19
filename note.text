@@ -1,0 +1,18 @@
+scp app/services/classifier_service.py smart-trashbin@192.168.1.16:~/Projects/SmartTrashBin/app/services/
+scp app/training/train.py smart-trashbin@192.168.1.16:~/Projects/SmartTrashBin/app/training/
+scp app/config.py smart-trashbin@192.168.1.16:~/Projects/SmartTrashBin/app/
+scp .env smart-trashbin@192.168.1.16:~/Projects/SmartTrashBin/
+scp data/models/trashnet_mobilenetv2.tflite smart-trashbin@192.168.1.16:~/Projects/SmartTrashBin/data/models/
+sm@rtTr@shBin02
+
+
+scp data/models/trashnet_mobilenetv2.tflite smart-trashbin@192.168.1.16:~/SmartTrashBin/data/models/
+scp app/api.py app/models/classification.py app/services/classifier_service.py smart-trashbin@192.168.1.16:~/SmartTrashBin/app/
+scp app/training/train.py smart-trashbin@192.168.1.16:~/SmartTrashBin/app/training/
+
+
+ssh smart-trashbin@192.168.1.16
+sm@rtTr@shBin02
+cd ~/Projects/SmartTrashBin/
+source venv/bin/activate
+APP_PORT=8001 python3 -m app.main

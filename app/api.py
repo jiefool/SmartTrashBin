@@ -13,13 +13,33 @@ from loguru import logger
 from app.config import settings
 from app.models.bin_status import BinReading
 from app.models.classification import ClassificationResult
-from app.sensors.ultrasonic import SimulatedUltrasonicSensor
+from app.sensors.ultrasonic import GPIOUltrasonicSensor, SimulatedUltrasonicSensor
 from app.services.camera_service import camera
 from app.services.classifier_service import classifier
+from app.services.detection_service import detection
 from app.services.monitor_service import MonitorService
 from app.utils.logging import setup_logging
 
 monitor = MonitorService()
+
+
+def _create_sensor():
+    """Create GPIO sensor on Raspberry Pi, fall back to simulated."""
+    try:
+        sensor = GPIOUltrasonicSensor(
+            bin_id="SMART-BIN",
+            echo_pin=settings.gpio_echo_pin,
+            trig_pin=settings.gpio_trig_pin,
+            capacity_cm=settings.bin_capacity_cm,
+        )
+        return sensor
+    except Exception as exc:
+        logger.warning(f"GPIO sensor unavailable ({exc}), using simulated sensor.")
+        return SimulatedUltrasonicSensor(
+            bin_id="SMART-BIN",
+            capacity_cm=settings.bin_capacity_cm,
+            initial_fill_percent=0.0,
+        )
 
 
 @asynccontextmanager
@@ -27,16 +47,9 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     setup_logging()
     logger.info(f"Starting {settings.app_name} ...")
 
-    # Register simulated bins (replace with real sensors in production)
-    for bin_id, fill_pct in [("BIN-A", 0.0), ("BIN-B", 50.0), ("BIN-C", 75.0)]:
-        monitor.register_sensor(
-            SimulatedUltrasonicSensor(
-                bin_id=bin_id,
-                capacity_cm=settings.bin_capacity_cm,
-                initial_fill_percent=fill_pct,
-            )
-        )
-
+    # Create sensor (real GPIO on Pi, simulated otherwise)
+    sensor = _create_sensor()
+    monitor.register_sensor(sensor)
     monitor.start()
 
     # Load the trash classification model (non-blocking if missing)
@@ -45,9 +58,16 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     # Initialise camera (non-blocking if no camera attached)
     camera.initialise()
 
+    # Configure and start auto-detection service
+    detection.configure(sensor, camera, classifier)
+    detection.start()
+
     yield
+    detection.stop()
     monitor.stop()
     camera.release()
+    if hasattr(sensor, "release"):
+        sensor.release()
     logger.info(f"{settings.app_name} shut down.")
 
 
@@ -66,12 +86,23 @@ async def root() -> dict[str, Any]:
         "version": "1.0.0",
         "classifier_ready": classifier.is_ready,
         "camera_ready": camera.is_ready,
+        "auto_detection": {
+            "enabled": detection.is_enabled,
+            "running": detection.is_running,
+            "threshold_inches": settings.detection_threshold_inches,
+            "object_detected": detection.object_detected,
+            "distance_inches": detection.latest_distance_inches,
+        },
         "endpoints": {
             "health": "/health",
             "all_bins": "/bins",
             "single_bin": "/bins/{bin_id}",
             "classify": "POST /classify",
             "capture_and_classify": "POST /capture-and-classify",
+            "detection_status": "/detection/status",
+            "detection_enable": "POST /detection/enable",
+            "detection_disable": "POST /detection/disable",
+            "detection_history": "/detection/history",
             "camera_feed": "/camera/feed",
             "camera_stream": "/camera/stream",
             "docs": "/docs",
@@ -114,6 +145,52 @@ async def get_bin(bin_id: str) -> dict[str, Any]:
         "distance_cm": r.distance_cm,
         "capacity_cm": r.capacity_cm,
         "timestamp": r.timestamp.isoformat(),
+    }
+
+
+
+# ── Detection endpoints ──────────────────────────────────────────────────
+
+@app.get("/detection/status", tags=["Detection"])
+async def detection_status() -> dict[str, Any]:
+    """Current state of the ultrasonic auto-detection system."""
+    return {
+        "enabled": detection.is_enabled,
+        "running": detection.is_running,
+        "object_detected": detection.object_detected,
+        "distance_inches": detection.latest_distance_inches,
+        "threshold_inches": settings.detection_threshold_inches,
+        "latest_classification": (
+            {
+                "category": detection.latest_result.predicted_category.value,
+                "confidence": detection.latest_result.confidence,
+            }
+            if detection.latest_result
+            else None
+        ),
+    }
+
+
+@app.post("/detection/enable", tags=["Detection"])
+async def detection_enable() -> dict[str, str]:
+    """Enable auto-detection."""
+    detection.set_enabled(True)
+    return {"status": "auto-detection enabled"}
+
+
+@app.post("/detection/disable", tags=["Detection"])
+async def detection_disable() -> dict[str, str]:
+    """Disable auto-detection."""
+    detection.set_enabled(False)
+    return {"status": "auto-detection disabled"}
+
+
+@app.get("/detection/history", tags=["Detection"])
+async def detection_history() -> dict[str, Any]:
+    """Return recent auto-detection results."""
+    return {
+        "count": len(detection.history),
+        "detections": detection.history,
     }
 
 
@@ -311,11 +388,19 @@ async def camera_feed():
                 <img src="/camera/stream" alt="Camera Feed" />
             </div>
             <div class="side-panel">
+                <div class="result-card" style="text-align:center;">
+                    <h2>📡 Ultrasonic Sensor</h2>
+                    <div style="font-size:2em;font-weight:bold;" id="distLabel">— in</div>
+                    <div style="font-size:0.9em;color:#aaa;" id="sensorStatus">Waiting for sensor...</div>
+                    <div style="margin-top:8px;">
+                        Threshold: <strong>{settings.detection_threshold_inches} in</strong>
+                    </div>
+                </div>
                 <div class="controls">
                     <button id="classifyBtn" onclick="classifyOnce()">🔍 Classify</button>
-                    <button id="autoBtn" onclick="toggleAuto()">▶ Auto Detect</button>
+                    <button id="autoBtn" onclick="toggleAutoDetection()">📡 Auto: ON</button>
                 </div>
-                <div class="status" id="status">Ready</div>
+                <div class="status" id="status">Ready – auto-detection active</div>
                 <div class="result-card" id="resultCard">
                     <h2>🏷️ Detection Result</h2>
                     <div class="category-label" id="catLabel">—</div>
@@ -340,8 +425,53 @@ async def camera_feed():
                 hazardous: '☣️'
             }};
 
-            let autoInterval = null;
             let classifying = false;
+            let autoEnabled = true;
+            let lastResultTs = null;
+
+            // Poll detection status from the sensor service
+            async function pollDetection() {{
+                try {{
+                    const resp = await fetch('/detection/status');
+                    const d = await resp.json();
+                    const dist = d.distance_inches;
+                    const distEl = document.getElementById('distLabel');
+                    const sensorEl = document.getElementById('sensorStatus');
+
+                    if (dist !== null) {{
+                        distEl.textContent = dist.toFixed(1) + ' in';
+                        if (d.object_detected) {{
+                            distEl.style.color = '#e74c3c';
+                            sensorEl.textContent = '🔴 Object detected!';
+                        }} else {{
+                            distEl.style.color = '#00d4aa';
+                            sensorEl.textContent = '🟢 Monitoring...';
+                        }}
+                    }} else {{
+                        distEl.textContent = '— in';
+                        sensorEl.textContent = 'Waiting for sensor...';
+                    }}
+
+                    // Check if there's a new auto-classification result
+                    if (d.latest_classification) {{
+                        const key = d.latest_classification.category + d.latest_classification.confidence;
+                        if (key !== lastResultTs) {{
+                            lastResultTs = key;
+                            // Fetch full history to get the latest result details
+                            const hResp = await fetch('/detection/history');
+                            const hData = await hResp.json();
+                            if (hData.detections.length > 0) {{
+                                const latest = hData.detections[0];
+                                showAutoResult(latest);
+                                addHistory(latest);
+                            }}
+                        }}
+                    }}
+                }} catch (e) {{
+                    // ignore polling errors
+                }}
+            }}
+            setInterval(pollDetection, 500);
 
             async function doClassify() {{
                 if (classifying) return;
@@ -353,7 +483,12 @@ async def camera_feed():
                     const data = await resp.json();
                     if (resp.ok) {{
                         showResult(data);
-                        addHistory(data);
+                        addHistory({{
+                            category: data.predicted_category,
+                            confidence: data.confidence,
+                            distance_inches: null,
+                            timestamp: new Date().toISOString(),
+                        }});
                     }} else {{
                         document.getElementById('status').textContent = '❌ ' + data.detail;
                     }}
@@ -366,20 +501,35 @@ async def camera_feed():
 
             function classifyOnce() {{ doClassify(); }}
 
-            function toggleAuto() {{
+            async function toggleAutoDetection() {{
                 const btn = document.getElementById('autoBtn');
-                if (autoInterval) {{
-                    clearInterval(autoInterval);
-                    autoInterval = null;
-                    btn.textContent = '▶ Auto Detect';
-                    btn.classList.remove('active');
-                    document.getElementById('status').textContent = 'Auto detect stopped';
-                }} else {{
-                    doClassify();
-                    autoInterval = setInterval(doClassify, 3000);
-                    btn.textContent = '⏹ Stop';
-                    btn.classList.add('active');
-                }}
+                autoEnabled = !autoEnabled;
+                const action = autoEnabled ? 'enable' : 'disable';
+                await fetch('/detection/' + action, {{ method: 'POST' }});
+                btn.textContent = autoEnabled ? '📡 Auto: ON' : '📡 Auto: OFF';
+                btn.classList.toggle('active', !autoEnabled);
+                document.getElementById('status').textContent =
+                    autoEnabled ? 'Auto-detection active' : 'Auto-detection paused';
+            }}
+
+            function showAutoResult(entry) {{
+                const cat = entry.category;
+                const pct = (entry.confidence * 100).toFixed(1);
+                const icon = ICONS[cat] || '❓';
+                const color = COLORS[cat] || '#00d4aa';
+                const dist = entry.distance_inches ? entry.distance_inches.toFixed(1) + 'in' : '';
+
+                document.getElementById('catLabel').innerHTML =
+                    `<span style="color:${{color}}">${{icon}} ${{cat.toUpperCase()}}</span>`;
+                document.getElementById('confLabel').textContent = pct + '% confidence' + (dist ? ' @ ' + dist : '');
+                document.getElementById('status').textContent =
+                    `Auto-detected: ${{cat}} (${{pct}}%)`;
+
+                const overlay = document.getElementById('overlay');
+                overlay.innerHTML = `${{icon}} ${{cat.toUpperCase()}} ${{pct}}%`;
+                overlay.style.color = color;
+                overlay.classList.add('show');
+                setTimeout(() => overlay.classList.remove('show'), 4000);
             }}
 
             function showResult(data) {{
@@ -419,15 +569,16 @@ async def camera_feed():
 
             function addHistory(data) {{
                 const list = document.getElementById('historyList');
-                const cat = data.predicted_category;
+                const cat = data.category || data.predicted_category;
                 const pct = (data.confidence * 100).toFixed(1);
-                const time = new Date().toLocaleTimeString();
+                const ts = data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
                 const icon = ICONS[cat] || '❓';
+                const dist = data.distance_inches ? data.distance_inches.toFixed(1) + 'in' : '';
                 const item = document.createElement('div');
                 item.className = 'history-item';
-                item.innerHTML = `<span>${{icon}} ${{cat}}</span><span>${{pct}}%</span><span>${{time}}</span>`;
+                item.innerHTML = `<span>${{icon}} ${{cat}}</span><span>${{pct}}%</span><span>${{dist}}</span><span>${{ts}}</span>`;
                 list.insertBefore(item, list.firstChild);
-                if (list.children.length > 20) list.removeChild(list.lastChild);
+                if (list.children.length > 30) list.removeChild(list.lastChild);
             }}
         </script>
     </body>
