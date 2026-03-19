@@ -52,6 +52,17 @@ class GPIOUltrasonicSensor(BaseSensor):
         GND  → GND (Pin 6)
     """
 
+    # HC-SR04 minimum reliable range is ~2 cm (~0.8 in).
+    # Readings below this are sensor noise / timeout artifacts.
+    MIN_VALID_CM = 2.0
+
+    # When the sensor returns an invalid reading, report this
+    # as "no object" (max range).
+    NO_OBJECT_CM = 400.0
+
+    # Number of readings to average for noise reduction
+    SAMPLE_COUNT = 3
+
     def __init__(
         self,
         bin_id: str,
@@ -75,6 +86,8 @@ class GPIOUltrasonicSensor(BaseSensor):
                 trigger=self._trig_pin,
                 max_distance=4,  # ~4 metres max
             )
+            # Allow sensor to settle
+            time.sleep(0.5)
             logger.info(
                 f"[{self.bin_id}] GPIO ultrasonic sensor initialised "
                 f"(ECHO=GPIO{self._echo_pin}, TRIG=GPIO{self._trig_pin})"
@@ -83,11 +96,34 @@ class GPIOUltrasonicSensor(BaseSensor):
             logger.error(f"[{self.bin_id}] Failed to init GPIO sensor: {exc}")
             raise
 
+    def _read_filtered(self) -> float:
+        """
+        Take multiple samples, discard invalid ones (below MIN_VALID_CM),
+        and return the median distance in cm.
+
+        Returns NO_OBJECT_CM if all samples are invalid (no object present).
+        """
+        samples = []
+        for _ in range(self.SAMPLE_COUNT):
+            raw_m = self._sensor.distance  # metres
+            raw_cm = raw_m * 100
+            if raw_cm >= self.MIN_VALID_CM:
+                samples.append(raw_cm)
+            time.sleep(0.03)  # 30 ms between pings
+
+        if not samples:
+            # All readings were below min range → no object
+            return self.NO_OBJECT_CM
+
+        # Return median to reject outliers
+        samples.sort()
+        return samples[len(samples) // 2]
+
     def read(self) -> BinReading:
         if self._sensor is None:
             raise RuntimeError("GPIO sensor not initialised.")
 
-        distance_cm = round(self._sensor.distance * 100, 2)  # gpiozero returns metres
+        distance_cm = round(self._read_filtered(), 2)
 
         reading = BinReading(
             bin_id=self.bin_id,
