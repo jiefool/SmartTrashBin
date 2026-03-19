@@ -15,6 +15,7 @@ Pin behaviour:
     both LOW               → stop / idle
 """
 
+import threading
 import time
 from typing import Optional
 
@@ -103,21 +104,41 @@ class ActuatorService:
     def __init__(self) -> None:
         self._actuators: dict[str, Actuator] = {}
         self._extend_duration: float = settings.actuator_extend_seconds
-        self._retract_duration: float = settings.actuator_retract_seconds
+        self._lock = threading.Lock()
+        self._busy = False
+
+    @property
+    def is_busy(self) -> bool:
+        """True while any actuator is mid-cycle (extend/retract)."""
+        return self._busy
 
     def initialise(self) -> None:
-        """Create all 3 actuators from config."""
+        """Create all 3 actuators and retract them all to start position."""
         self._actuators = {
             "actuator_1": Actuator("Biodegradable", settings.actuator_1_pin_a, settings.actuator_1_pin_b),
             "actuator_2": Actuator("NonBiodegradable", settings.actuator_2_pin_a, settings.actuator_2_pin_b),
             "actuator_3": Actuator("Hazardous", settings.actuator_3_pin_a, settings.actuator_3_pin_b),
         }
-        logger.info("ActuatorService initialised (3 actuators)")
+        # Ensure all actuators start in retracted position
+        self.retract_all()
+        logger.info("ActuatorService initialised (3 actuators – all retracted)")
+
+    def retract_all(self) -> None:
+        """Retract all actuators to their home position."""
+        for act in self._actuators.values():
+            act.retract()
+        logger.info("All actuators retracted.")
 
     def activate_for_category(self, category: TrashCategory) -> str:
         """
         Activate the actuator mapped to the given trash category.
-        Extends, waits, retracts, waits, then stops.
+
+        1. Acquire lock (blocks if another cycle is in progress)
+        2. Retract all actuators first
+        3. Extend the target actuator for 10 seconds
+        4. Retract all actuators
+        5. Release lock so next classification can proceed
+
         Returns the actuator name.
         """
         key = CATEGORY_ACTUATOR_MAP.get(category)
@@ -125,30 +146,48 @@ class ActuatorService:
             logger.error(f"No actuator mapped for category: {category}")
             return "unknown"
 
-        actuator = self._actuators[key]
-        logger.info(f"Sorting '{category.value}' → [{actuator.name}]")
+        with self._lock:
+            self._busy = True
+            try:
+                actuator = self._actuators[key]
+                logger.info(f"Sorting '{category.value}' → [{actuator.name}]")
 
-        actuator.extend()
-        time.sleep(self._extend_duration)
-        actuator.retract()
+                # Step 1: make sure all actuators are retracted
+                self.retract_all()
+                time.sleep(0.5)  # brief settle time
 
-        logger.info(f"[{actuator.name}] Sort complete.")
-        return actuator.name
+                # Step 2: extend the target actuator
+                actuator.extend()
+                logger.info(f"[{actuator.name}] Extended – waiting {self._extend_duration}s ...")
+                time.sleep(self._extend_duration)
+
+                # Step 3: retract all actuators
+                self.retract_all()
+                time.sleep(0.5)  # settle time
+
+                logger.info(f"[{actuator.name}] Sort complete – all actuators retracted.")
+                return actuator.name
+            finally:
+                self._busy = False
 
     def get_status(self) -> dict:
         """Return status of all actuators."""
         return {
-            name: {
-                "name": act.name,
-                "pin_a": act.pin_a_num,
-                "pin_b": act.pin_b_num,
-                "available": act.is_available,
-            }
-            for name, act in self._actuators.items()
+            "busy": self._busy,
+            "actuators": {
+                name: {
+                    "name": act.name,
+                    "pin_a": act.pin_a_num,
+                    "pin_b": act.pin_b_num,
+                    "available": act.is_available,
+                }
+                for name, act in self._actuators.items()
+            },
         }
 
     def release(self) -> None:
-        """Release all actuator GPIO resources."""
+        """Retract all and release GPIO resources."""
+        self.retract_all()
         for act in self._actuators.values():
             act.release()
         logger.info("ActuatorService released.")

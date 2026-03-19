@@ -105,6 +105,11 @@ class DetectionService:
                     self._object_detected = True
                     now = time.time()
 
+                    # Skip if actuators are still busy (mid-cycle)
+                    if self._actuator_service and self._actuator_service.is_busy:
+                        time.sleep(settings.detection_poll_interval)
+                        continue
+
                     # Cooldown: don't re-trigger too fast
                     if (now - self._last_detection_time) >= self._cooldown_seconds:
                         self._last_detection_time = now
