@@ -47,8 +47,8 @@ class Actuator:
         try:
             from gpiozero import OutputDevice
 
-            self._pin_a = OutputDevice(self.pin_a_num, initial_value=False)
-            self._pin_b = OutputDevice(self.pin_b_num, initial_value=False)
+            self._pin_a = OutputDevice(self.pin_a_num, initial_value=True)
+            self._pin_b = OutputDevice(self.pin_b_num, initial_value=True)
             self._available = True
             logger.info(
                 f"[{self.name}] Actuator initialised "
@@ -66,8 +66,8 @@ class Actuator:
         """Extend actuator (push trash)."""
         logger.info(f"[{self.name}] Extending...")
         if self._available:
-            self._pin_a.on()
-            self._pin_b.off()
+            self._pin_a.off()
+            self._pin_b.on()
         else:
             logger.debug(f"[{self.name}] Simulated extend")
 
@@ -75,16 +75,16 @@ class Actuator:
         """Retract actuator (return to neutral)."""
         logger.info(f"[{self.name}] Retracting...")
         if self._available:
-            self._pin_a.off()
-            self._pin_b.on()
+            self._pin_a.on()
+            self._pin_b.off()
         else:
             logger.debug(f"[{self.name}] Simulated retract")
 
     def stop(self) -> None:
-        """Stop actuator (both pins LOW)."""
+        """Stop actuator (both pins HIGH)."""
         if self._available:
-            self._pin_a.off()
-            self._pin_b.off()
+            self._pin_a.on()
+            self._pin_b.on()
         logger.debug(f"[{self.name}] Stopped")
 
     def release(self) -> None:
@@ -130,11 +130,7 @@ class ActuatorService:
 
         actuator.extend()
         time.sleep(self._extend_duration)
-        actuator.stop()
-
         actuator.retract()
-        time.sleep(self._retract_duration)
-        actuator.stop()
 
         logger.info(f"[{actuator.name}] Sort complete.")
         return actuator.name

@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     actuator_2_pin_b: int = 5
     actuator_3_pin_a: int = 6    # Hazardous
     actuator_3_pin_b: int = 7
-    actuator_extend_seconds: float = 2.0   # how long to extend
-    actuator_retract_seconds: float = 2.0  # how long to retract
+    actuator_extend_seconds: float = 10.0  # how long to stay extended
+    actuator_retract_seconds: float = 2.0  # (unused – retracts immediately after extend)
 
     # Classification model
     model_path: str = "data/models/trashnet_mobilenetv2.tflite"
