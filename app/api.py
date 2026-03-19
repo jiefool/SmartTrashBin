@@ -12,8 +12,9 @@ from loguru import logger
 
 from app.config import settings
 from app.models.bin_status import BinReading
-from app.models.classification import ClassificationResult
+from app.models.classification import ClassificationResult, TrashCategory
 from app.sensors.ultrasonic import GPIOUltrasonicSensor, SimulatedUltrasonicSensor
+from app.services.actuator_service import actuators
 from app.services.camera_service import camera
 from app.services.classifier_service import classifier
 from app.services.detection_service import detection
@@ -58,14 +59,18 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     # Initialise camera (non-blocking if no camera attached)
     camera.initialise()
 
-    # Configure and start auto-detection service
-    detection.configure(sensor, camera, classifier)
+    # Initialise actuators
+    actuators.initialise()
+
+    # Configure and start auto-detection service (with actuators)
+    detection.configure(sensor, camera, classifier, actuators)
     detection.start()
 
     yield
     detection.stop()
     monitor.stop()
     camera.release()
+    actuators.release()
     if hasattr(sensor, "release"):
         sensor.release()
     logger.info(f"{settings.app_name} shut down.")
@@ -103,6 +108,8 @@ async def root() -> dict[str, Any]:
             "detection_enable": "POST /detection/enable",
             "detection_disable": "POST /detection/disable",
             "detection_history": "/detection/history",
+            "actuators_status": "/actuators/status",
+            "actuator_trigger": "POST /actuators/trigger/{category}",
             "camera_feed": "/camera/feed",
             "camera_stream": "/camera/stream",
             "docs": "/docs",
@@ -192,6 +199,33 @@ async def detection_history() -> dict[str, Any]:
         "count": len(detection.history),
         "detections": detection.history,
     }
+
+
+
+# ── Actuator endpoints ───────────────────────────────────────────────────
+
+@app.get("/actuators/status", tags=["Actuators"])
+async def actuator_status() -> dict[str, Any]:
+    """Return status of all 3 actuators."""
+    return actuators.get_status()
+
+
+@app.post("/actuators/trigger/{category}", tags=["Actuators"])
+async def actuator_trigger(category: str) -> dict[str, Any]:
+    """
+    Manually trigger an actuator by trash category.
+
+    Valid categories: biodegradable, non_biodegradable, hazardous.
+    """
+    try:
+        cat = TrashCategory(category)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid category '{category}'. Use: biodegradable, non_biodegradable, hazardous.",
+        )
+    name = actuators.activate_for_category(cat)
+    return {"category": category, "actuator": name, "status": "activated"}
 
 
 

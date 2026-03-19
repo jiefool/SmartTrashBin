@@ -41,11 +41,12 @@ class DetectionService:
         self._latest_distance_inches: Optional[float] = None
         self._object_detected = False
 
-    def configure(self, sensor, camera_service, classifier_service) -> None:
+    def configure(self, sensor, camera_service, classifier_service, actuator_service=None) -> None:
         """Inject dependencies after they are initialised."""
         self._sensor = sensor
         self._camera = camera_service
         self._classifier = classifier_service
+        self._actuator_service = actuator_service
 
     @property
     def is_configured(self) -> bool:
@@ -135,10 +136,18 @@ class DetectionService:
             result = self._classifier.classify(image_bytes)
             self._latest_result = result
 
+            # Activate the corresponding actuator to sort the trash
+            actuator_name = "none"
+            if self._actuator_service:
+                actuator_name = self._actuator_service.activate_for_category(
+                    result.predicted_category
+                )
+
             entry = {
                 "category": result.predicted_category.value,
                 "confidence": result.confidence,
                 "distance_inches": self._latest_distance_inches,
+                "actuator": actuator_name,
                 "timestamp": datetime.utcnow().isoformat(),
             }
             self._history.insert(0, entry)
@@ -147,7 +156,7 @@ class DetectionService:
 
             logger.info(
                 f"Auto-classified: {result.predicted_category.value} "
-                f"({result.confidence:.1%})"
+                f"({result.confidence:.1%}) → actuator: {actuator_name}"
             )
         except Exception as exc:
             logger.error(f"Auto-classify failed: {exc}")

@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     detection_cooldown_seconds: float = 5.0      # seconds between classifications
     detection_poll_interval: float = 0.3         # how often to read sensor (seconds)
 
+    # GPIO – Actuators (2 pins each: extend / retract)
+    actuator_1_pin_a: int = 2    # Biodegradable
+    actuator_1_pin_b: int = 3
+    actuator_2_pin_a: int = 4    # Non-Biodegradable
+    actuator_2_pin_b: int = 5
+    actuator_3_pin_a: int = 6    # Hazardous
+    actuator_3_pin_b: int = 7
+    actuator_extend_seconds: float = 2.0   # how long to extend
+    actuator_retract_seconds: float = 2.0  # how long to retract
+
     # Classification model
     model_path: str = "data/models/trashnet_mobilenetv2.tflite"
 
