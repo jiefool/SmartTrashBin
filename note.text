@@ -16,3 +16,39 @@ sm@rtTr@shBin02
 cd ~/Projects/SmartTrashBin/
 source venv/bin/activate
 APP_PORT=8001 python3 -m app.main
+
+
+cd ~/SmartTrashBin
+deactivate
+rm -rf venv
+python3 -m venv --system-site-packages venv
+source venv/bin/activate
+pip install -r requirements.txt
+APP_PORT=8001 python3 -m app.main
+GPIOZERO_PIN_FACTORY=lgpio APP_PORT=8001 python3 -m app.main
+
+User=smart-trashbin
+WorkingDirectory=/home/smart-trashbin/Projects/SmartTrashBin
+Environment="PATH=/home/smart-trashbin/Projects/SmartTrashBin/venv/bin:/usr/bin"
+Environment="GPIOZERO_PIN_FACTORY=lgpio"
+Environment="APP_PORT=8001"
+ExecStart=/home/smart-trashbin/Projects/SmartTrashBin/venv/bin/python -m app.main
+Restart=always
+RestartSec=5
+
+[Unit]
+Description=Smart Trash Bin App
+After=network.target
+
+[Service]
+User=smart-trashbin
+WorkingDirectory=/home/smart-trashbin/Projects/SmartTrashBin
+Environment="PATH=/home/smart-trashbin/Projects/SmartTrashBin/venv/bin:/usr/bin"
+Environment="GPIOZERO_PIN_FACTORY=lgpio"
+Environment="APP_PORT=8001"
+ExecStart=/home/smart-trashbin/Projects/SmartTrashBin/venv/bin/python3 -m app.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
