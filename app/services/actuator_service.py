@@ -50,7 +50,7 @@ class Relay:
         try:
             from gpiozero import OutputDevice
 
-            self._pin = OutputDevice(self.pin_num, initial_value=False)
+            self._pin = OutputDevice(self.pin_num, initial_value=True, active_high=False)
             self._available = True
             logger.info(f"[{self.name}] Relay initialised (GPIO{self.pin_num})")
         except Exception as exc:
