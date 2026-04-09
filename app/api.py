@@ -15,9 +15,11 @@ from app.models.bin_status import BinReading
 from app.models.classification import ClassificationResult, TrashCategory
 from app.sensors.ultrasonic import GPIOUltrasonicSensor, SimulatedUltrasonicSensor
 from app.services.actuator_service import actuators
+from app.services.bin_level_service import bin_levels
 from app.services.camera_service import camera
 from app.services.classifier_service import classifier
 from app.services.detection_service import detection
+from app.services.led_service import leds
 from app.services.monitor_service import MonitorService
 from app.utils.logging import setup_logging
 
@@ -59,8 +61,15 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     # Initialise camera (non-blocking if no camera attached)
     camera.initialise()
 
-    # Initialise actuators
+    # Initialise LEDs and bin level sensors
+    leds.initialise()
+    bin_levels.configure(leds)
+    bin_levels.initialise()
+    bin_levels.start()
+
+    # Initialise actuators (with bin level checks)
     actuators.initialise()
+    actuators.set_bin_level_service(bin_levels)
 
     # Configure and start auto-detection service (with actuators)
     detection.configure(sensor, camera, classifier, actuators)
@@ -68,9 +77,12 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
 
     yield
     detection.stop()
+    bin_levels.stop()
     monitor.stop()
     camera.release()
     actuators.release()
+    leds.release()
+    bin_levels.release()
     if hasattr(sensor, "release"):
         sensor.release()
     logger.info(f"{settings.app_name} shut down.")
@@ -110,6 +122,8 @@ async def root() -> dict[str, Any]:
             "detection_history": "/detection/history",
             "actuators_status": "/actuators/status",
             "actuator_trigger": "POST /actuators/trigger/{category}",
+            "bin_levels": "/bins/levels",
+            "leds_status": "/leds/status",
             "camera_feed": "/camera/feed",
             "camera_stream": "/camera/stream",
             "docs": "/docs",
@@ -226,6 +240,21 @@ async def actuator_trigger(category: str) -> dict[str, Any]:
         )
     name = actuators.activate_for_category(cat)
     return {"category": category, "actuator": name, "status": "activated"}
+
+
+# ── Bin Level endpoints ──────────────────────────────────────────────────
+
+@app.get("/bins/levels", tags=["Bin Levels"])
+async def get_bin_levels() -> dict[str, Any]:
+    """Return fill level status of all 3 bins."""
+    return bin_levels.get_status()
+
+
+@app.get("/leds/status", tags=["LEDs"])
+async def get_led_status() -> dict[str, Any]:
+    """Return status of all 3 bin-full indicator LEDs."""
+    return leds.get_status()
+
 
 
 
@@ -434,6 +463,11 @@ async def camera_feed():
                     <button id="classifyBtn" onclick="classifyOnce()">🔍 Classify</button>
                     <button id="autoBtn" onclick="toggleAutoDetection()">📡 Auto: ON</button>
                 </div>
+                <div class="controls">
+                    <button style="background:#27ae60" onclick="simulateCategory('biodegradable')">🍂 Biodegradable</button>
+                    <button style="background:#2980b9" onclick="simulateCategory('non_biodegradable')">♻️ Non-Biodeg.</button>
+                    <button style="background:#e74c3c" onclick="simulateCategory('hazardous')">☣️ Hazardous</button>
+                </div>
                 <div class="status" id="status">Ready – auto-detection active</div>
                 <div class="result-card" id="resultCard">
                     <h2>🏷️ Detection Result</h2>
@@ -534,6 +568,44 @@ async def camera_feed():
             }}
 
             function classifyOnce() {{ doClassify(); }}
+
+            async function simulateCategory(category) {{
+                document.getElementById('status').textContent = '⏳ Triggering ' + category + '...';
+                try {{
+                    const resp = await fetch('/actuators/trigger/' + category, {{ method: 'POST' }});
+                    const data = await resp.json();
+                    if (resp.ok) {{
+                        const icon = ICONS[category] || '❓';
+                        const color = COLORS[category] || '#00d4aa';
+                        document.getElementById('catLabel').innerHTML =
+                            `<span style="color:${{color}}">${{icon}} ${{category.toUpperCase()}}</span>`;
+                        document.getElementById('confLabel').textContent = 'Simulated';
+                        document.getElementById('status').textContent =
+                            data.actuator === 'blocked'
+                                ? '🚫 Bin full – relay blocked for ' + category
+                                : '✅ Relay activated for ' + category;
+
+                        const overlay = document.getElementById('overlay');
+                        overlay.innerHTML = data.actuator === 'blocked'
+                            ? `🚫 ${{category.toUpperCase()}} BIN FULL`
+                            : `${{icon}} ${{category.toUpperCase()}} (simulated)`;
+                        overlay.style.color = data.actuator === 'blocked' ? '#e74c3c' : color;
+                        overlay.classList.add('show');
+                        setTimeout(() => overlay.classList.remove('show'), 4000);
+
+                        addHistory({{
+                            category: category,
+                            confidence: 1.0,
+                            distance_inches: null,
+                            timestamp: new Date().toISOString(),
+                        }});
+                    }} else {{
+                        document.getElementById('status').textContent = '❌ ' + data.detail;
+                    }}
+                }} catch (e) {{
+                    document.getElementById('status').textContent = '❌ ' + e.message;
+                }}
+            }}
 
             async function toggleAutoDetection() {{
                 const btn = document.getElementById('autoBtn');

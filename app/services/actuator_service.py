@@ -1,46 +1,48 @@
 from __future__ import annotations
 
 """
-Actuator service – controls 3 linear actuators via GPIO to sort trash
-into the correct bin based on classification result.
+Relay service – controls 3 relays via GPIO to sort trash into the
+correct bin based on classification result.
 
-Each actuator has 2 control pins (extend / retract):
-    Actuator 1 (biodegradable)      → GPIO 2 & 3
-    Actuator 2 (non_biodegradable)  → GPIO 4 & 5
-    Actuator 3 (hazardous)          → GPIO 6 & 7
+Each relay uses a single GPIO pin:
+    Relay 1 (biodegradable)      → GPIO 2
+    Relay 2 (non_biodegradable)  → GPIO 3
+    Relay 3 (hazardous)          → GPIO 4
 
 Pin behaviour:
-    pin_a HIGH, pin_b LOW  → extend  (push trash into bin)
-    pin_a LOW,  pin_b HIGH → retract (return to neutral)
-    both LOW               → stop / idle
+    HIGH → relay ON  (activate sorting mechanism)
+    LOW  → relay OFF (idle)
 """
 
 import threading
 import time
-from typing import Optional
 
 from loguru import logger
 
 from app.config import settings
 from app.models.classification import TrashCategory
 
-# Map each category to its actuator config key
-CATEGORY_ACTUATOR_MAP = {
-    TrashCategory.BIODEGRADABLE: "actuator_1",
-    TrashCategory.NON_BIODEGRADABLE: "actuator_2",
-    TrashCategory.HAZARDOUS: "actuator_3",
+# Map each category to its relay and bin key
+CATEGORY_RELAY_MAP = {
+    TrashCategory.BIODEGRADABLE: "relay_1",
+    TrashCategory.NON_BIODEGRADABLE: "relay_2",
+    TrashCategory.HAZARDOUS: "relay_3",
+}
+
+RELAY_TO_BIN_MAP = {
+    "relay_1": "bin_1",
+    "relay_2": "bin_2",
+    "relay_3": "bin_3",
 }
 
 
-class Actuator:
-    """Controls a single linear actuator with 2 GPIO pins."""
+class Relay:
+    """Controls a single relay with 1 GPIO pin."""
 
-    def __init__(self, name: str, pin_a: int, pin_b: int) -> None:
+    def __init__(self, name: str, pin: int) -> None:
         self.name = name
-        self.pin_a_num = pin_a
-        self.pin_b_num = pin_b
-        self._pin_a = None
-        self._pin_b = None
+        self.pin_num = pin
+        self._pin = None
         self._available = False
         self._init_gpio()
 
@@ -48,148 +50,146 @@ class Actuator:
         try:
             from gpiozero import OutputDevice
 
-            self._pin_a = OutputDevice(self.pin_a_num, initial_value=True)
-            self._pin_b = OutputDevice(self.pin_b_num, initial_value=True)
+            self._pin = OutputDevice(self.pin_num, initial_value=False)
             self._available = True
-            logger.info(
-                f"[{self.name}] Actuator initialised "
-                f"(pin_a=GPIO{self.pin_a_num}, pin_b=GPIO{self.pin_b_num})"
-            )
+            logger.info(f"[{self.name}] Relay initialised (GPIO{self.pin_num})")
         except Exception as exc:
-            logger.warning(f"[{self.name}] GPIO unavailable ({exc}), actuator simulated.")
+            logger.warning(f"[{self.name}] GPIO unavailable ({exc}), relay simulated.")
             self._available = False
 
     @property
     def is_available(self) -> bool:
         return self._available
 
-    def extend(self) -> None:
-        """Extend actuator (push trash)."""
-        logger.info(f"[{self.name}] Extending...")
+    def on(self) -> None:
+        """Turn relay ON."""
+        logger.info(f"[{self.name}] Relay ON")
         if self._available:
-            self._pin_a.off()
-            self._pin_b.on()
+            self._pin.on()
         else:
-            logger.debug(f"[{self.name}] Simulated extend")
+            logger.debug(f"[{self.name}] Simulated ON")
 
-    def retract(self) -> None:
-        """Retract actuator (return to neutral)."""
-        logger.info(f"[{self.name}] Retracting...")
+    def off(self) -> None:
+        """Turn relay OFF."""
+        logger.info(f"[{self.name}] Relay OFF")
         if self._available:
-            self._pin_a.on()
-            self._pin_b.off()
+            self._pin.off()
         else:
-            logger.debug(f"[{self.name}] Simulated retract")
-
-    def stop(self) -> None:
-        """Stop actuator (both pins HIGH)."""
-        if self._available:
-            self._pin_a.on()
-            self._pin_b.on()
-        logger.debug(f"[{self.name}] Stopped")
+            logger.debug(f"[{self.name}] Simulated OFF")
 
     def release(self) -> None:
-        """Release GPIO resources."""
-        self.stop()
+        """Turn off and release GPIO."""
+        self.off()
         if self._available:
-            self._pin_a.close()
-            self._pin_b.close()
+            self._pin.close()
             self._available = False
             logger.info(f"[{self.name}] GPIO released.")
 
 
 class ActuatorService:
-    """Manages all 3 actuators and activates the correct one after classification."""
+    """Manages all 3 relays and activates the correct one after classification."""
 
     def __init__(self) -> None:
-        self._actuators: dict[str, Actuator] = {}
-        self._extend_duration: float = settings.actuator_extend_seconds
+        self._relays: dict[str, Relay] = {}
+        self._on_duration: float = settings.relay_on_seconds
         self._lock = threading.Lock()
         self._busy = False
+        self._bin_level_service = None
+
+    def set_bin_level_service(self, bin_level_service) -> None:
+        """Inject bin level service to check if bins are full."""
+        self._bin_level_service = bin_level_service
 
     @property
     def is_busy(self) -> bool:
-        """True while any actuator is mid-cycle (extend/retract)."""
+        """True while a relay cycle is in progress."""
         return self._busy
 
     def initialise(self) -> None:
-        """Create all 3 actuators and retract them all to start position."""
-        self._actuators = {
-            "actuator_1": Actuator("Biodegradable", settings.actuator_1_pin_a, settings.actuator_1_pin_b),
-            "actuator_2": Actuator("NonBiodegradable", settings.actuator_2_pin_a, settings.actuator_2_pin_b),
-            "actuator_3": Actuator("Hazardous", settings.actuator_3_pin_a, settings.actuator_3_pin_b),
+        """Create all 3 relays and ensure they start OFF."""
+        self._relays = {
+            "relay_1": Relay("Biodegradable", settings.relay_1_pin),
+            "relay_2": Relay("NonBiodegradable", settings.relay_2_pin),
+            "relay_3": Relay("Hazardous", settings.relay_3_pin),
         }
-        # Ensure all actuators start in retracted position
-        self.retract_all()
-        logger.info("ActuatorService initialised (3 actuators – all retracted)")
+        self.all_off()
+        logger.info("ActuatorService initialised (3 relays – all OFF)")
 
-    def retract_all(self) -> None:
-        """Retract all actuators to their home position."""
-        for act in self._actuators.values():
-            act.retract()
-        logger.info("All actuators retracted.")
+    def all_off(self) -> None:
+        """Turn all relays OFF."""
+        for relay in self._relays.values():
+            relay.off()
 
     def activate_for_category(self, category: TrashCategory) -> str:
         """
-        Activate the actuator mapped to the given trash category.
+        Activate the relay mapped to the given trash category.
 
         1. Acquire lock (blocks if another cycle is in progress)
-        2. Retract all actuators first
-        3. Extend the target actuator for 10 seconds
-        4. Retract all actuators
+        2. Turn all relays OFF first
+        3. Turn ON the target relay for configured duration
+        4. Turn all relays OFF
         5. Release lock so next classification can proceed
 
-        Returns the actuator name.
+        Returns the relay name.
         """
-        key = CATEGORY_ACTUATOR_MAP.get(category)
-        if not key or key not in self._actuators:
-            logger.error(f"No actuator mapped for category: {category}")
+        key = CATEGORY_RELAY_MAP.get(category)
+        if not key or key not in self._relays:
+            logger.error(f"No relay mapped for category: {category}")
             return "unknown"
+
+        # Check if the target bin is full
+        bin_key = RELAY_TO_BIN_MAP.get(key)
+        if bin_key and self._bin_level_service:
+            if self._bin_level_service.is_bin_full(bin_key):
+                logger.warning(
+                    f"BIN FULL – relay '{key}' blocked for '{category.value}'. "
+                    f"Cannot sort into full bin."
+                )
+                return "blocked"
 
         with self._lock:
             self._busy = True
             try:
-                actuator = self._actuators[key]
-                logger.info(f"Sorting '{category.value}' → [{actuator.name}]")
+                relay = self._relays[key]
+                logger.info(f"Sorting '{category.value}' → [{relay.name}]")
 
-                # Step 1: make sure all actuators are retracted
-                self.retract_all()
-                time.sleep(0.5)  # brief settle time
+                # Step 1: make sure all relays are OFF
+                self.all_off()
+                time.sleep(0.3)
 
-                # Step 2: extend the target actuator
-                actuator.extend()
-                logger.info(f"[{actuator.name}] Extended – waiting {self._extend_duration}s ...")
-                time.sleep(self._extend_duration)
+                # Step 2: turn ON the target relay
+                relay.on()
+                logger.info(f"[{relay.name}] ON – waiting {self._on_duration}s ...")
+                time.sleep(self._on_duration)
 
-                # Step 3: retract all actuators
-                self.retract_all()
-                time.sleep(0.5)  # settle time
+                # Step 3: turn all relays OFF
+                self.all_off()
+                time.sleep(0.3)
 
-                logger.info(f"[{actuator.name}] Sort complete – all actuators retracted.")
-                return actuator.name
+                logger.info(f"[{relay.name}] Sort complete – all relays OFF.")
+                return relay.name
             finally:
                 self._busy = False
 
     def get_status(self) -> dict:
-        """Return status of all actuators."""
+        """Return status of all relays."""
         return {
             "busy": self._busy,
-            "actuators": {
+            "relays": {
                 name: {
-                    "name": act.name,
-                    "pin_a": act.pin_a_num,
-                    "pin_b": act.pin_b_num,
-                    "available": act.is_available,
+                    "name": relay.name,
+                    "pin": relay.pin_num,
+                    "available": relay.is_available,
                 }
-                for name, act in self._actuators.items()
+                for name, relay in self._relays.items()
             },
         }
 
     def release(self) -> None:
-        """Retract all and release GPIO resources."""
-        self.retract_all()
-        for act in self._actuators.values():
-            act.release()
+        """Turn all OFF and release GPIO resources."""
+        self.all_off()
+        for relay in self._relays.values():
+            relay.release()
         logger.info("ActuatorService released.")
 
 
