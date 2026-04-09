@@ -170,6 +170,12 @@ class DetectionService:
         if not self.is_configured:
             logger.warning("DetectionService not configured – skipping start.")
             return
+        if not self._camera or not self._camera.is_ready:
+            logger.warning("DetectionService: no camera attached – auto-detection disabled.")
+            return
+        if not self._classifier or not self._classifier.is_ready:
+            logger.warning("DetectionService: classifier not ready – auto-detection disabled.")
+            return
         self._running = True
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
