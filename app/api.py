@@ -353,6 +353,26 @@ async def camera_feed():
     """
     camera_available = camera.is_ready
 
+    video_panel = (
+        '<img src="/camera/stream" alt="Camera Feed" />'
+        if camera_available
+        else '''
+        <div style="width:100%;height:360px;background:#16213e;border:3px solid #555;
+            border-radius:10px;display:flex;flex-direction:column;align-items:center;
+            justify-content:center;color:#aaa;font-size:1.2em;">
+            <div style="font-size:3em;margin-bottom:10px;">📷</div>
+            <div>No Camera Attached</div>
+            <div style="font-size:0.8em;margin-top:5px;color:#666;">
+                Use the simulate buttons below to test relays
+            </div>
+        </div>
+        '''
+    )
+
+    classify_disabled = "disabled" if not camera_available else ""
+    classify_label = "Classify" if camera_available else "No Camera"
+    auto_label = "Auto: ON" if camera_available else "No Camera"
+
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -445,18 +465,7 @@ async def camera_feed():
         <div class="container">
             <div class="video-panel">
                 <div class="overlay" id="overlay"></div>
-                {"" if not camera_available else ""}
-                {"<img src=\"/camera/stream\" alt=\"Camera Feed\" />" if camera_available else '''
-                <div style="width:100%;height:360px;background:#16213e;border:3px solid #555;
-                    border-radius:10px;display:flex;flex-direction:column;align-items:center;
-                    justify-content:center;color:#aaa;font-size:1.2em;">
-                    <div style="font-size:3em;margin-bottom:10px;">📷</div>
-                    <div>No Camera Attached</div>
-                    <div style="font-size:0.8em;margin-top:5px;color:#666;">
-                        Use the simulate buttons below to test relays
-                    </div>
-                </div>
-                '''}
+                {video_panel}
             </div>
             <div class="side-panel">
                 <div class="result-card" style="text-align:center;">
@@ -468,10 +477,10 @@ async def camera_feed():
                     </div>
                 </div>
                 <div class="controls">
-                    <button id="classifyBtn" onclick="classifyOnce()" {"disabled" if not camera_available else ""}>
-                        🔍 {"Classify" if camera_available else "No Camera"}</button>
-                    <button id="autoBtn" onclick="toggleAutoDetection()" {"disabled" if not camera_available else ""}>
-                        📡 {"Auto: ON" if camera_available else "No Camera"}</button>
+                    <button id="classifyBtn" onclick="classifyOnce()" {classify_disabled}>
+                        🔍 {classify_label}</button>
+                    <button id="autoBtn" onclick="toggleAutoDetection()" {classify_disabled}>
+                        📡 {auto_label}</button>
                 </div>
                 <div class="controls">
                     <button style="background:#27ae60" onclick="simulateCategory('biodegradable')">🍂 Biodegradable</button>
