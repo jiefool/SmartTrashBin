@@ -155,7 +155,7 @@ class ActuatorService:
 
                 # Step 1: make sure all relays are OFF
                 self.all_off()
-                time.sleep(0.3)
+                time.sleep(0.05)
 
                 # Step 2: turn ON the target relay
                 relay.on()
@@ -164,7 +164,7 @@ class ActuatorService:
 
                 # Step 3: turn all relays OFF
                 self.all_off()
-                time.sleep(0.3)
+                time.sleep(0.05)
 
                 logger.info(f"[{relay.name}] Sort complete – all relays OFF.")
                 return relay.name
