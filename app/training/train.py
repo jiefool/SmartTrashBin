@@ -1,14 +1,10 @@
 """
 Training script for the Smart Trash Bin classifier.
 
-Downloads the TrashNet dataset from GitHub, remaps the 6 original classes
-into 3 categories (biodegradable, non_biodegradable, hazardous), then
-trains a MobileNetV2 transfer-learning model.
+Uses the local dataset at data/trashnet_remapped/ with 3 categories:
+    biodegradable, non_biodegradable, hazardous
 
-Mapping:
-    biodegradable       ← cardboard, paper
-    non_biodegradable   ← glass, metal, plastic
-    hazardous           ← trash
+Trains a MobileNetV2 transfer-learning model and exports to TFLite.
 
 Usage:
     python -m app.training.train
@@ -17,92 +13,13 @@ Usage:
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
-import sys
 
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
 EPOCHS = 10
-DATASET_URL = "https://github.com/garythung/trashnet/raw/master/data/dataset-resized.zip"
-DATASET_DIR = "data/trashnet"
-REMAPPED_DIR = "data/trashnet_remapped"
+DATASET_DIR = "data/trashnet_remapped"
 MODEL_SAVE_PATH = "data/models/trashnet_mobilenetv2.keras"
 TFLITE_SAVE_PATH = "data/models/trashnet_mobilenetv2.tflite"
-
-# TrashNet → 3-category mapping
-CATEGORY_MAP = {
-    "cardboard": "biodegradable",
-    "paper":     "biodegradable",
-    "glass":     "non_biodegradable",
-    "metal":     "non_biodegradable",
-    "plastic":   "non_biodegradable",
-    "trash":     "hazardous",
-}
-
-
-def download_dataset() -> str:
-    """Download and extract TrashNet dataset if not already present."""
-    extract_dir = DATASET_DIR
-    zip_path = os.path.join("data", "dataset-resized.zip")
-
-    if os.path.isdir(os.path.join(extract_dir, "dataset-resized")):
-        print(f"Dataset already exists at '{extract_dir}/dataset-resized'. Skipping download.")
-        return os.path.join(extract_dir, "dataset-resized")
-
-    os.makedirs(extract_dir, exist_ok=True)
-
-    print(f"Downloading TrashNet dataset from {DATASET_URL} ...")
-    subprocess.check_call(
-        ["curl", "-L", "-o", zip_path, DATASET_URL],
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    )
-
-    print("Extracting dataset ...")
-    import zipfile
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(extract_dir)
-
-    os.remove(zip_path)
-    print(f"Dataset extracted to '{extract_dir}/dataset-resized'")
-    return os.path.join(extract_dir, "dataset-resized")
-
-
-def remap_dataset(original_path: str) -> str:
-    """
-    Remap the 6-class TrashNet dataset into 3 categories by creating
-    symlinks (or copies) in a new directory structure.
-    """
-    if os.path.isdir(REMAPPED_DIR) and len(os.listdir(REMAPPED_DIR)) == 3:
-        print(f"Remapped dataset already exists at '{REMAPPED_DIR}'. Skipping.")
-        return REMAPPED_DIR
-
-    print("\nRemapping dataset to 3 categories ...")
-    # Clean slate
-    if os.path.exists(REMAPPED_DIR):
-        shutil.rmtree(REMAPPED_DIR)
-
-    for new_cat in set(CATEGORY_MAP.values()):
-        os.makedirs(os.path.join(REMAPPED_DIR, new_cat), exist_ok=True)
-
-    count = 0
-    for old_cat, new_cat in CATEGORY_MAP.items():
-        src_dir = os.path.join(original_path, old_cat)
-        if not os.path.isdir(src_dir):
-            print(f"  ⚠ Skipping missing folder: {src_dir}")
-            continue
-        for fname in os.listdir(src_dir):
-            src = os.path.join(src_dir, fname)
-            dst = os.path.join(REMAPPED_DIR, new_cat, f"{old_cat}_{fname}")
-            shutil.copy2(src, dst)
-            count += 1
-
-    print(f"Remapped {count} images into {REMAPPED_DIR}")
-    for cat in sorted(set(CATEGORY_MAP.values())):
-        n = len(os.listdir(os.path.join(REMAPPED_DIR, cat)))
-        print(f"  {cat}: {n} images")
-    return REMAPPED_DIR
 
 
 def build_model(num_classes: int = 3):
@@ -139,8 +56,19 @@ def train() -> None:
     from keras.preprocessing.image import ImageDataGenerator
     from keras.applications.mobilenet_v2 import preprocess_input
 
-    original_path = download_dataset()
-    dataset_path = remap_dataset(original_path)
+    dataset_path = DATASET_DIR
+
+    if not os.path.isdir(dataset_path):
+        print(f"ERROR: Dataset not found at '{dataset_path}'")
+        print("Expected 3 subfolders: biodegradable, non_biodegradable, hazardous")
+        return
+
+    # Print dataset summary
+    for cat in sorted(os.listdir(dataset_path)):
+        cat_path = os.path.join(dataset_path, cat)
+        if os.path.isdir(cat_path):
+            count = len(os.listdir(cat_path))
+            print(f"  {cat}: {count} images")
 
     print(f"\nLoading images from '{dataset_path}' ...")
 
