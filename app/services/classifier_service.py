@@ -26,10 +26,11 @@ from app.models.classification import (
 IMG_SIZE = (224, 224)
 
 # Category labels in the same order used during training
+# (flow_from_directory sorts alphabetically: biodegradable=0, hazardous=1, non_biodegradable=2)
 CATEGORY_LABELS: List[TrashCategory] = [
     TrashCategory.BIODEGRADABLE,
-    TrashCategory.NON_BIODEGRADABLE,
     TrashCategory.HAZARDOUS,
+    TrashCategory.NON_BIODEGRADABLE,
 ]
 
 
